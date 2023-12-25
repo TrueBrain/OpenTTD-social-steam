@@ -1,0 +1,81 @@
+name: Release (Windows)
+
+on:
+  workflow_call:
+    inputs:
+      discord_game_sdk_version:
+        required: true
+        type: string
+
+jobs:
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: x86
+          host: x86
+        - arch: x64
+          host: x64
+
+    name: Windows (${{ matrix.arch }})
+
+    runs-on: windows-latest
+
+    steps:
+    - name: Download source
+      uses: actions/download-artifact@v3
+      with:
+        name: internal-source
+
+    - name: Unpack source
+      shell: bash
+      run: |
+        tar -xf source.tar.gz --strip-components=1
+
+    - name: Install Steamworks SDK
+      shell: bash
+      run: |
+        curl -H "CF-Access-Client-Id: ${{ secrets.STEAMWORKS_SDK_ID }}" -H "CF-Access-Client-Secret: ${{ secrets.STEAMWORKS_SDK_SECRET }}" -O https://steamworks-sdk.openttd.org/steamworks_sdk_${{ vars.STEAMWORKS_SDK_VERSION }}.zip
+        unzip -q steamworks_sdk_${{ vars.STEAMWORKS_SDK_VERSION }}.zip
+        ./copy-sdk-files.sh
+
+    - name: Install MSVC problem matcher
+      uses: ammaraskar/msvc-problem-matcher@master
+
+    - name: Configure developer command prompt for ${{ matrix.arch }}
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: ${{ matrix.host }}
+
+    - name: Build
+      shell: bash
+      run: |
+        mkdir build
+        cd build
+
+        echo "::group::CMake"
+        cmake ${GITHUB_WORKSPACE} \
+          -GNinja \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          # EOF
+        echo "::endgroup::"
+
+        echo "::group::Build"
+        cmake --build .
+        echo "::endgroup::"
+
+    - name: Create bundles
+      shell: bash
+      run: |
+        cd ${GITHUB_WORKSPACE}/build
+        echo "::group::Run CPack"
+        cpack
+        echo "::endgroup::"
+
+    - name: Store bundles
+      uses: actions/upload-artifact@v3
+      with:
+        name: steam-social-windows-${{ matrix.arch }}
+        path: build/bundles
+        retention-days: 5
