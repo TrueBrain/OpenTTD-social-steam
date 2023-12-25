@@ -1,0 +1,33 @@
+name: Upload (GitHub)
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+jobs:
+  upload:
+    name: Upload (GitHub)
+
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Download all bundles
+      uses: actions/download-artifact@v3
+
+    - name: Upload to GitHub
+      run: |
+        # "gh" only works automatically if run from a git repository.
+        git init
+        git remote add origin ${{ github.event.repository.html_url }}
+
+        # Don't upload some files
+        rm steam-social-source/README.md
+        rm steam-social-source/released.txt
+
+        gh release upload ${{ inputs.version }} steam-social-*/*
+        gh release upload ${{ inputs.version }} symbols-*/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

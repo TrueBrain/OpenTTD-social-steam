@@ -1,0 +1,112 @@
+name: Release (Linux)
+
+on:
+  workflow_call:
+
+jobs:
+  linux:
+    name: Linux (Generic)
+
+    runs-on: ubuntu-22.04
+    container:
+      # manylinux2014 is based on CentOS 7, but already has a lot of things
+      # installed and preconfigured. It makes it easier to build this project.
+      image: quay.io/pypa/manylinux2014_x86_64
+
+    steps:
+    - name: Download source
+      uses: actions/download-artifact@v3
+      with:
+        name: internal-source
+
+    - name: Unpack source
+      run: |
+        tar -xf source.tar.gz --strip-components=1
+
+    # curl is too old for most of the tools to work properly. For example,
+    # rust-toolchain doesn't work properly, neither vcpkg caching.
+    # The easier solution here is to upgrade curl.
+    - name: Update curl
+      run: |
+        yum install -y \
+          openssl-devel \
+          # EOF
+
+        mkdir /curl
+        cd /curl
+        curl -o curl-7.81.0.zip https://curl.se/download/curl-7.81.0.zip
+        unzip curl-7.81.0.zip
+        cd curl-7.81.0
+        ./configure --with-ssl --with-zlib --prefix=/usr --libdir=/usr/lib64
+        make -j $(nproc)
+        make install
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Enable Rust cache
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install dependencies
+      run: |
+        echo "::group::Install system dependencies"
+        yum install -y \
+          zip \
+          # EOF
+        echo "::endgroup::"
+
+        echo "::group::Install breakpad dependencies"
+        cargo install dump_syms
+        echo "::endgroup::"
+
+    - name: Install Steamworks SDK
+      shell: bash
+      run: |
+        curl -H "CF-Access-Client-Id: ${{ secrets.STEAMWORKS_SDK_ID }}" -H "CF-Access-Client-Secret: ${{ secrets.STEAMWORKS_SDK_SECRET }}" -O https://steamworks-sdk.openttd.org/steamworks_sdk_${{ vars.STEAMWORKS_SDK_VERSION }}.zip
+        unzip -q steamworks_sdk_${{ vars.STEAMWORKS_SDK_VERSION }}.zip
+        ./copy-sdk-files.sh
+
+    - name: Install GCC problem matcher
+      uses: ammaraskar/gcc-problem-matcher@master
+
+    - name: Build
+      run: |
+        mkdir -p build
+        cd build
+
+        echo "::group::CMake"
+        cmake ${GITHUB_WORKSPACE} \
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+          # EOF
+        echo "::endgroup::"
+
+        echo "::group::Build"
+        echo "Running on $(nproc) cores"
+        cmake --build . -j $(nproc)
+        echo "::endgroup::"
+
+    - name: Create breakpad symbols
+      run: |
+        cd build
+        dump_syms ./libsteam-social.so --inlines --store symbols
+
+    - name: Create bundles
+      run: |
+        cd ${GITHUB_WORKSPACE}/build
+        echo "::group::Run CPack"
+        cpack
+        echo "::endgroup::"
+
+    - name: Store bundles
+      uses: actions/upload-artifact@v3
+      with:
+        name: steam-social-linux-generic
+        path: build/bundles
+        retention-days: 5
+
+    - name: Store symbols
+      uses: actions/upload-artifact@v3
+      with:
+        name: symbols-linux-generic
+        path: build/symbols
+        retention-days: 5
